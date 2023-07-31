@@ -5,290 +5,193 @@ Mubin Qureshi - 180181900
 July 31st, 2023
 '''
 
+# Imports
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-import sys
 from sklearn.model_selection import train_test_split
-#from google.colab import drive
 from sklearn.metrics import mean_squared_error
 from sklearn.metrics import log_loss
+from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
-#drive.mount('/content/gdrive/')
 
-#Data Exploration and Cleaning
+'''
+==============================
+Data Cleaning
+==============================
+Notes:
+N/A
+'''
 
-"""
-1. Sample code number: id number
-2. Clump Thickness: 1 - 10
-3. Uniformity of Cell Size: 1 - 10
-4. Uniformity of Cell Shape: 1 - 10
-5. Marginal Adhesion: 1 - 10
-6. Single Epithelial Cell Size: 1 - 10
-7. Bare Nuclei: 1 - 10
-8. Bland Chromatin: 1 - 10
-9. Normal Nucleoli: 1 - 10
-10. Mitoses: 1 - 10
-11. Class: (2 for benign, 4 for malignant)
-"""
-#Loading the Dataset from your PC where the .csv file is located
-
+# Colomn names were provided in the data overview but not added to the data itself, need to add them
 col_names = ["Sample code number", "Clump Thickness (1-10)", "Uniformity of Cell Size (1-10)", "Uniformity of Cell Shape (1-10)", "Marginal Adhesion (1-10)", "Single Epithelial Cell Size (1-10)", "Bare Nuclei (1-10)",
            "Bland Chromatin (1-10)", "Normal Nucleoli (1-10)", "Mitoses (1-10)", "Class (2 for benign, 4 for malignant)"]
 
+# Change file path as needed
 data1 = pd.read_csv("breast-cancer-wisconsin.data", names=col_names)
-#data1
 
-# object data type inside of BareNuclei tells us that there are string or null
+
 # values present in that datatype
 data1.info()
+# Looking at the Dtype for the 
+# object data type inside of BareNuclei tells us that there are string or null
 
-# No Null values
+# Check for  Null or NaN values, None were found
 data1.isnull().sum()
-
-# No NaN values
 data1.isna().sum()
 
-# Investigation into the data set showed that the column had '?' values
-# We remove those here and assign to data2
+# By manualling scanning the dataset we discovered some instances where a question mark was used instead of a value
 bare_nuc_missing = data1.loc[data1['Bare Nuclei (1-10)'] == '?']
 missing_values = bare_nuc_missing.index.tolist()
-data2 = data1.drop(index=missing_values)
-data2.info()
 
-# convert data2 to int64 now that the column is all of type integer
-data2['Bare Nuclei (1-10)'] = data2['Bare Nuclei (1-10)'].astype(np.int64)
-data2.info()
+# Create a new dataset without the invalid data
+data_cleaned = data1.drop(index=missing_values)
+data_cleaned.info()
 
-#map malignant and benign to 1 and 2 instead of 2 and 4
-data2['Class (2 for benign, 4 for malignant)'] = data2['Class (2 for benign, 4 for malignant)'].map({2: 0, 4: 1})
+# Convert data to int64 now that the column is all of type integer
+data_cleaned['Bare Nuclei (1-10)'] = data_cleaned['Bare Nuclei (1-10)'].astype(np.int64)
+data_cleaned.info()
 
-#make sure that all sample code numbers are unique
-data2['Sample code number'].is_unique
+# Malignant/Benign is currently represented with 2 and 4, changing it to be 1 and 2
+data_cleaned['Class (2 for benign, 4 for malignant)'] = data_cleaned['Class (2 for benign, 4 for malignant)'].map({2: 0, 4: 1})
+
 
 #Remove duplicates from data frame
-sample_code = data2["Sample code number"]
-data2[data2.isin(data2[data2.duplicated()])].sort_values("Sample code number")
+sample_code = data_cleaned["Sample code number"]
+data_cleaned[data_cleaned.isin(data_cleaned[data_cleaned.duplicated()])].sort_values("Sample code number")
 
 # Check state of data after dropping duplicates
-data2 = data2.drop_duplicates(subset='Sample code number', keep=False, inplace=False).reset_index(drop=True)
-#data2
+data_cleaned = data_cleaned.drop_duplicates(subset='Sample code number', keep=False, inplace=False).reset_index(drop=True)
+#data_cleaned
 
-# Now that we know that we don't have any duplicate entities, we can
-# remove the sample code from the data as it bears no significance
-# to our classification
-removedSampleCodeData = data2.drop('Sample code number', axis=1)
-
-"""Cleaning performed on the data:
-
-*   Consolidating duplicate entries - Where two entries have a duplicate sample code
-    *  Determined which entries have duplicates and removed duplicate entities
-    * removed any NaN columns
-*   Handling null entries - in form of ? - specifically inside of the Bare Nuclei column
-    * Removed entries w/ null values in this column
-* Ensured that all features are correctly within the range of 1..10
-
-# Finding Outliers
-"""
-
-#this function will be used to find outliers by finding any values that fall outside of the interquartile range
-
-def find_outliers_IQR(df):
-
-   q1=df.quantile(0.25)
-   q3=df.quantile(0.75)
-
-   IQR=q3-q1
-
-   outliers = df[((df<(q1-1.5*IQR)) | (df>(q3+1.5*IQR)))]
-
-   return outliers
+# Remove sample code as its no longer needed
+removedSampleCodeData = data_cleaned.drop('Sample code number', axis=1)
 
 
-#when considering outliers in our dataset, it is important to understand that statistical outliers in any of these features are likely to be indicators of cancer.
-#If we just calculate and remove outliers, we will remove many real datapoints that had unusually high values, even though the high values are real, and do in fact indicate malignancy.
-#To counterract this, we consider outliers within the malginant subset, and outliers within the benign subset. This way, an outlier is no longer just an unusually high or low value, but it
-#is an unusually high or low value considering that the datapoint was malignant or benign.
-#this works especially well since there is a high correlation between every feature in our dataset.
-print("-----------------malignant-------------------------------------------------------")
-data_malignant = data2[data2["Class (2 for benign, 4 for malignant)"] == 1]
-for i in data_malignant:
-  print(i, "has", len(find_outliers_IQR(data_malignant[i])), "outliers")
+'''
+==============================
+Data Preperation
+==============================
+Notes:
+Split the data into training and testing data
+'''
 
-
-print("-----------------benign-------------------------------------------------------")
-data_benign = data2[data2["Class (2 for benign, 4 for malignant)"] == 0]
-
-for i in data_benign:
-  print(i, "has", len(find_outliers_IQR(data_benign[i])), "outliers")
-
-"""# Removing Outliers
-
-Since our
-dataset is relatively small, it will be best to leave some of the outliers
-untouched, and use imputation/clamp transformations on the others to minimize the amount of data lost. The malignant subset of data has relatively few outliers, so we will make no changes to this subset of the data.
-"""
-
-def clamp_transform(data, feature, lower, upper):
-  return data[(data[feature] < upper) & (data[feature] > lower)]
-
-#using clamp transformation to resolve outliers in uniformity of cell shape
-shape_mean = data_benign["Uniformity of Cell Shape (1-10)"].mean()
-print(shape_mean)
-sns.boxplot(y = data_benign["Uniformity of Cell Shape (1-10)"])
-#remove all values form dataset if they aren't between 0 and 3
-data_benign = clamp_transform(data_benign, "Uniformity of Cell Shape (1-10)", 0, 3)
-
-
-#using clamp transformation to resolve outliers in uniformity of cell size
-size_mean = data_benign["Uniformity of Cell Size (1-10)"].mean()
-print(size_mean)
-sns.boxplot(y = data_benign["Uniformity of Cell Size (1-10)"])
-#chose 3 as cutoff for clamp transformation
-data_benign = clamp_transform(data_benign, "Uniformity of Cell Size (1-10)", 0,3)
-
-#using clamp transformation to resolve outliers in single epithelial cell size
-
-epi_mean = data_benign["Single Epithelial Cell Size (1-10)"].mean()
-
-print(epi_mean)
-
-data_benign = clamp_transform(data_benign, "Single Epithelial Cell Size (1-10)", 0,3)
-
-frames = [data_malignant, data_benign]
-
-data2_clean = pd.concat(frames)
-
-data2_clean.info()
-
-"""# **Model Selection**"""
-
-#splitting data into training data and testing data
-
-x_col_names =  ["Clump Thickness (1-10)", "Uniformity of Cell Size (1-10)", "Uniformity of Cell Shape (1-10)", "Marginal Adhesion (1-10)", "Single Epithelial Cell Size (1-10)", "Bare Nuclei (1-10)",
+# New colomn names without sample number
+col_names2 =  ["Clump Thickness (1-10)", "Uniformity of Cell Size (1-10)", "Uniformity of Cell Shape (1-10)", "Marginal Adhesion (1-10)", "Single Epithelial Cell Size (1-10)", "Bare Nuclei (1-10)",
            "Bland Chromatin (1-10)", "Normal Nucleoli (1-10)", "Mitoses (1-10)"]
-x = data2[x_col_names]
-y = data2["Class (2 for benign, 4 for malignant)"]
-x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2)
+x = data_cleaned[col_names2]
+y = data_cleaned["Class (2 for benign, 4 for malignant)"]
 
-#one test/train split will represent the data with outliers removed, and the other will represent the data that still has outliers.
-x2_col_names =  ["Clump Thickness (1-10)", "Uniformity of Cell Size (1-10)", "Uniformity of Cell Shape (1-10)", "Marginal Adhesion (1-10)", "Single Epithelial Cell Size (1-10)", "Bare Nuclei (1-10)",
-           "Bland Chromatin (1-10)", "Normal Nucleoli (1-10)", "Mitoses (1-10)"]
-x2 = data2_clean[x2_col_names]
-y2 = data2_clean["Class (2 for benign, 4 for malignant)"]
-x2_train, x2_test, y2_train, y2_test = train_test_split(x2, y2, test_size=0.2)
+# Train_test_split from sklearn splits arrays or matrices into random train and test subsets.
+x_train, x_test, y_train, y_test = train_test_split(x, y, test_size = 0.2)
 
-"""# Logistic Regression
 
-First we will initialize our sklearn logreg model. We will set the penalty to L2 so that every input feature is considered towards the logit function.
+"""
+==============================
+K Nearest Neighbour Clustering
+Notes: the code below will try several different k values for 50 unique test/train splits. 
+For each test/train split, it will choose an optimal value for k by choosing the value that results in the lowest mean square error. 
+It then chooses the average of all of the optimal k values for each test/train split, and chooses that as the overall optimal k value.
+==============================
 """
 
-from sklearn.linear_model import LogisticRegression
-logreg=LogisticRegression(penalty = 'l2')
-logreg.fit(x_train,y_train)
-y_pred=logreg.predict(x_test)
+x_col_names = ["Clump Thickness (1-10)", "Uniformity of Cell Size (1-10)", "Uniformity of Cell Shape (1-10)",
+               "Marginal Adhesion (1-10)", "Single Epithelial Cell Size (1-10)", "Bare Nuclei (1-10)",
+               "Bland Chromatin (1-10)", "Normal Nucleoli (1-10)", "Mitoses (1-10)"]
 
-logreg=LogisticRegression(penalty = 'l2')
-logreg.fit(x2_train,y2_train)
-y2_pred=logreg.predict(x2_test)
+x = data_cleaned[x_col_names]
+y = data_cleaned["Class (2 for benign, 4 for malignant)"]
 
-"""# Logistic Regression Model Performance and Results"""
+'''
+# Initializing variables to track optimal k and minimum error
+optimal_k = 0
+minimum_error = 10000
+trials = 10
+optimal_k_trials = []
 
-from sklearn.metrics import accuracy_score
+for _ in range(trials):
+    optimal_k = 0
+    minimum_error = 10000
+    for k in range(1, 51, 2):
+        k_errors = []  # To store errors for different splits with the same k value
+        for i in range(50):
+            x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2)
+            knn = KNeighborsClassifier(n_neighbors=k)
+            knn.fit(x_train, y_train)
+            y_pred = knn.predict(x_test)
+            error = mean_squared_error(y_test, y_pred)
+            k_errors.append(error)
 
-#accuracy of model with outliers still in dataset
-score1 = accuracy_score(y_test,y_pred)
-print("with outliers remaining, our model is ", score1*100, "% accurate")
-#accuracy of model after removing outliers
-score2 = accuracy_score(y2_test,y2_pred)
-print("with outliers removed, our model is ", score2*100, "% accurate")
+        avg_error = sum(k_errors) / len(k_errors)
+        if avg_error < minimum_error:
+            minimum_error = avg_error
+            optimal_k = k
 
-from sklearn.metrics import confusion_matrix
+    optimal_k_trials.append(optimal_k)
+    # Output the determined optimal K value
+    print("Optimal K Value:", optimal_k)
+
+print("Output from multiple runs:", optimal_k_trials)
+
+'''
+
+# Ran it 10 times and got the following output
+# Output from multiple runs: [5, 5, 5, 7, 5, 5, 5, 13, 5, 5]
+
+# Test KNN with min, max, median (5, 7, 13)
+
+
+# KNN with k=5
+knn = KNeighborsClassifier(n_neighbors = 5)
+knn.fit(x_train,y_train)
+KNeighborsClassifier(5)
+y_pred = knn.predict(x_test)
+accuracy = knn.score(x_test, y_test)
+print("KNN (k=5) accuracy: %.4f" % accuracy, "%")
+
 cm=confusion_matrix(y_test,y_pred)
 conf_matrix=pd.DataFrame(data=cm,columns=['Predicted: Benign','Predicted:Malignant'],index=['Actual: Benign','Actual: Malignant'])
 plt.figure(figsize = (8,5))
 sns.heatmap(conf_matrix, annot=True,fmt='d',cmap="YlGnBu")
 
-print("data with outliers:")
-print("using logistic regression we get a log loss of", log_loss(y_test, y_pred))
-print("using logistic regression we get a Mean Squared Error of ", mean_squared_error(y_test,y_pred))
-
-print("data without outliers")
-print("using logistic regression we get a log loss of", log_loss(y2_test, y2_pred))
-print("using logistic regression we get a Mean Squared Error of ", mean_squared_error(y2_test,y2_pred))
-
-"""## **K Nearest Neighbors**
-
-Choosing optimal value for K
-"""
-
-minimum_error = 10000
-final_k = 0
-k_sum = 0
-for i in range(50):
-  x_col_names =  ["Clump Thickness (1-10)", "Uniformity of Cell Size (1-10)", "Uniformity of Cell Shape (1-10)", "Marginal Adhesion (1-10)", "Single Epithelial Cell Size (1-10)", "Bare Nuclei (1-10)",
-           "Bland Chromatin (1-10)", "Normal Nucleoli (1-10)", "Mitoses (1-10)"]
-  x = data2[x_col_names]
-  y = data2["Class (2 for benign, 4 for malignant)"]
-  x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2)
-  for k in range(1,51,2):
-    knn = KNeighborsClassifier(n_neighbors = k)
-    knn.fit(x_train,y_train)
-    KNeighborsClassifier(k)
-    y_pred = knn.predict(x_test)
-    error = mean_squared_error(y_test, y_pred)
-    if (error < minimum_error):
-      minimum_error = error
-      final_k = k
-  k_sum = k_sum + final_k
-
-final_k = k_sum //50
-print(final_k)
+knn5_mse = mean_squared_error(y_test,y_pred)
+print("KNN (k=5) Mean Squared Error: %.4f" % knn5_mse)
 
 
-
-#the code above will try several different k values for 50 unique
-#test/train splits. For each test/train split, it will choose an
-#optimal value for k by choosing the value that results in the
-#lowest mean square error. It then chooses the average of all
-#of the optimal k values for each test/train split, and
-#chooses that as the overall optimal k value.
-
-"""#K nearest Neighbors Model Performance and Results"""
-
-from sklearn.neighbors import KNeighborsClassifier
-#Implementing KNN on data2 with outliers remaining
-
+# KNN with k=7
 knn = KNeighborsClassifier(n_neighbors = 7)
 knn.fit(x_train,y_train)
 KNeighborsClassifier(7)
 y_pred = knn.predict(x_test)
 accuracy = knn.score(x_test, y_test)
 
-print("using K Nearest Neighbors to predict whether a datapoint is benign or malignant, with 5 neighbors we get an accuracy of ", accuracy)
+print("KNN (k=7) accuracy: %.4f" % accuracy, "%")
 
-from sklearn.metrics import confusion_matrix
 cm=confusion_matrix(y_test,y_pred)
 conf_matrix=pd.DataFrame(data=cm,columns=['Predicted: Benign','Predicted:Malignant'],index=['Actual: Benign','Actual: Malignant'])
 plt.figure(figsize = (8,5))
 sns.heatmap(conf_matrix, annot=True,fmt='d',cmap="YlGnBu")
-print("using K Nearest Neighbors we get a Mean Squared Error of ", mean_squared_error(y_test,y_pred))
 
+knn7_mse = mean_squared_error(y_test,y_pred)
+print("KNN (k=7) Mean Squared Error: %.4f" % knn7_mse)
 
-#implementing KNN on data2 with outliers removed
-knn = KNeighborsClassifier(n_neighbors = 7)
-knn.fit(x2_train,y2_train)
-KNeighborsClassifier(7)
-y2_pred = knn.predict(x2_test)
-accuracy = knn.score(x2_test, y2_test)
+# KNN with k=13
+knn = KNeighborsClassifier(n_neighbors = 13)
+knn.fit(x_train,y_train)
+KNeighborsClassifier(13)
+y_pred = knn.predict(x_test)
+accuracy = knn.score(x_test, y_test)
 
-print("using K Nearest Neighbors to predict whether a datapoint is benign or malignant, with 7 neighbors we get an accuracy of ", accuracy)
+print("KNN (k=13) accuracy: %.4f" % accuracy, "%")
 
-from sklearn.metrics import confusion_matrix
-cm=confusion_matrix(y2_test,y2_pred)
+cm=confusion_matrix(y_test,y_pred)
 conf_matrix=pd.DataFrame(data=cm,columns=['Predicted: Benign','Predicted:Malignant'],index=['Actual: Benign','Actual: Malignant'])
 plt.figure(figsize = (8,5))
 sns.heatmap(conf_matrix, annot=True,fmt='d',cmap="YlGnBu")
-print("using K Nearest Neighbors we get a Mean Squared Error of ", mean_squared_error(y2_test,y2_pred))
+
+knn13_mse = mean_squared_error(y_test,y_pred)
+print("KNN (k=13) Mean Squared Error: %.4f" % knn13_mse)
